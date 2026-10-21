@@ -61,16 +61,26 @@ class GeminiClient:
         if system_instruction:
             config_kwargs["system_instruction"] = system_instruction
 
-        # Primary model for Google AI Studio Free Tier
+        # Build candidate models dynamically from API key capabilities
         candidate_models = [self.text_model]
-        if "gemini-flash-latest" not in candidate_models:
-            candidate_models.append("gemini-flash-latest")
+        try:
+            for m in self._client.models.list():
+                name = getattr(m, "name", "")
+                if name.startswith("models/"):
+                    name = name[7:]
+                if any(x in name.lower() for x in ("flash", "pro", "gemini-2")):
+                    if name not in candidate_models:
+                        candidate_models.append(name)
+        except Exception:
+            for fallback in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest"]:
+                if fallback not in candidate_models:
+                    candidate_models.append(fallback)
 
         last_error = None
         for model_name in candidate_models:
-            # Retry transient 503 (demand spike) or 429 (rate limit) with backoff
-            retries = 4
-            backoff_delays = [3.0, 6.0, 12.0, 20.0]
+            # Try model with short backoff; failover quickly to other models if 503 persist
+            retries = 2
+            backoff_delays = [2.0, 4.0]
 
             for attempt in range(retries):
                 try:
@@ -83,7 +93,7 @@ class GeminiClient:
                     )
 
                     if model_name != self.text_model:
-                        logger.info("Switched to working Gemini model", extra={"model": model_name})
+                        logger.info("Successfully connected using working Gemini model", extra={"model": model_name})
                         self.text_model = model_name
 
                     text = response.text or ""
@@ -101,23 +111,23 @@ class GeminiClient:
                     last_error = err
                     err_str = str(err).lower()
 
-                    # 404 means model doesn't exist under this API key - jump to next candidate immediately
+                    # 404 means model not found for this account/version – immediately try next candidate
                     if "404" in err_str or "not found" in err_str:
-                        logger.debug("Model not found, trying next candidate", extra={"model": model_name})
                         break
 
-                    # 503 / 429 means temporary high demand or rate limit - sleep and retry
+                    # 503 / 429: retry once, then failover to the next candidate model
                     is_transient = "503" in err_str or "unavailable" in err_str or "429" in err_str or "demand" in err_str
                     if is_transient and attempt < retries - 1:
                         delay = backoff_delays[attempt]
                         logger.warning(
-                            f"Gemini API transient spike ({str(err)[:120]}); backing off {delay}s before retry {attempt + 1}/{retries}...",
-                            extra={"model": model_name, "attempt": attempt + 1, "delay": delay},
+                            f"Gemini model {model_name} busy ({str(err)[:80]}); backing off {delay}s before retry...",
+                            extra={"model": model_name, "delay": delay},
                         )
                         await asyncio.sleep(delay)
                         continue
 
-                    # If other error or out of retries, record and try next candidate
+                    # Out of retries for this model, try next candidate model in list
+                    logger.info(f"Model {model_name} unavailable; failing over to next available candidate model...")
                     break
 
         if last_error:
