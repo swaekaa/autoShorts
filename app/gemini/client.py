@@ -7,6 +7,7 @@ and model validation at startup.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -60,94 +61,92 @@ class GeminiClient:
         if system_instruction:
             config_kwargs["system_instruction"] = system_instruction
 
+        # Primary model with valid fallbacks for Google AI Studio
         candidate_models = [self.text_model]
-        for m in ["gemini-flash-latest", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-pro-latest", "gemini-2.0-flash-exp"]:
+        for m in ["gemini-flash-latest", "gemini-1.5-flash", "gemini-pro-latest"]:
             if m not in candidate_models:
                 candidate_models.append(m)
 
         last_error = None
         for model_name in candidate_models:
-            try:
-                if response_schema is not None:
-                    config_kwargs["response_mime_type"] = "application/json"
-                    try:
-                        config_kwargs["response_schema"] = response_schema
+            # Retry transient 503 (demand spike) or 429 (rate limit) with backoff
+            retries = 3
+            backoff_delays = [2.5, 5.0, 10.0]
+
+            for attempt in range(retries):
+                try:
+                    if response_schema is not None:
+                        config_kwargs["response_mime_type"] = "application/json"
+                        try:
+                            config_kwargs["response_schema"] = response_schema
+                            generation_config = genai_types.GenerateContentConfig(**config_kwargs)
+                            response = self._client.models.generate_content(
+                                model=model_name,
+                                contents=prompt,
+                                config=generation_config,
+                            )
+                        except Exception as schema_err:
+                            s_err = str(schema_err).lower()
+                            if "404" in s_err or "not found" in s_err:
+                                raise schema_err
+                            if "503" in s_err or "unavailable" in s_err or "429" in s_err:
+                                raise schema_err  # let outer transient retry handle with sleep
+                            logger.warning(
+                                "generate_content with response_schema failed, falling back to JSON mode",
+                                extra={"error": str(schema_err)[:300]},
+                            )
+                            config_kwargs.pop("response_schema", None)
+                            generation_config = genai_types.GenerateContentConfig(**config_kwargs)
+                            response = self._client.models.generate_content(
+                                model=model_name,
+                                contents=prompt,
+                                config=generation_config,
+                            )
+                    else:
                         generation_config = genai_types.GenerateContentConfig(**config_kwargs)
                         response = self._client.models.generate_content(
                             model=model_name,
                             contents=prompt,
                             config=generation_config,
                         )
-                    except Exception as schema_err:
-                        if "404" in str(schema_err) or "not found" in str(schema_err).lower():
-                            raise schema_err
-                        logger.warning(
-                            "generate_content with response_schema failed, falling back to JSON mode",
-                            extra={"error": str(schema_err)[:300]},
-                        )
-                        config_kwargs.pop("response_schema", None)
-                        generation_config = genai_types.GenerateContentConfig(**config_kwargs)
-                        response = self._client.models.generate_content(
-                            model=model_name,
-                            contents=prompt,
-                            config=generation_config,
-                        )
-                else:
-                    generation_config = genai_types.GenerateContentConfig(**config_kwargs)
-                    response = self._client.models.generate_content(
-                        model=model_name,
-                        contents=prompt,
-                        config=generation_config,
-                    )
 
-                if model_name != self.text_model:
-                    logger.info("Switched to working Gemini model", extra={"model": model_name})
-                    self.text_model = model_name
-
-                text = response.text or ""
-                usage = {}
-                if hasattr(response, "usage_metadata") and response.usage_metadata:
-                    meta = response.usage_metadata
-                    usage = {
-                        "prompt_token_count": getattr(meta, "prompt_token_count", None),
-                        "candidates_token_count": getattr(meta, "candidates_token_count", None),
-                        "total_token_count": getattr(meta, "total_token_count", None),
-                    }
-                return text, usage
-
-            except Exception as err:
-                last_error = err
-                err_str = str(err).lower()
-        # If all candidates returned 404, query models.list() to discover any accessible model
-        try:
-            logger.info("Candidate models returned 404; querying models.list() to discover accessible models...")
-            discovered_models = []
-            for m in self._client.models.list():
-                m_name = getattr(m, "name", "")
-                if m_name.startswith("models/"):
-                    m_name = m_name[7:]
-                if m_name:
-                    discovered_models.append(m_name)
-
-            logger.info("Discovered available models", extra={"models": discovered_models[:10]})
-
-            for model_name in discovered_models:
-                if any(k in model_name.lower() for k in ("flash", "gemini", "pro")):
-                    try:
-                        config_kwargs.pop("response_schema", None)
-                        generation_config = genai_types.GenerateContentConfig(**config_kwargs)
-                        response = self._client.models.generate_content(
-                            model=model_name,
-                            contents=prompt,
-                            config=generation_config,
-                        )
-                        logger.info("Successfully connected using discovered model", extra={"model": model_name})
+                    if model_name != self.text_model:
+                        logger.info("Switched to working Gemini model", extra={"model": model_name})
                         self.text_model = model_name
-                        return response.text or "", {}
-                    except Exception:
+
+                    text = response.text or ""
+                    usage = {}
+                    if hasattr(response, "usage_metadata") and response.usage_metadata:
+                        meta = response.usage_metadata
+                        usage = {
+                            "prompt_token_count": getattr(meta, "prompt_token_count", None),
+                            "candidates_token_count": getattr(meta, "candidates_token_count", None),
+                            "total_token_count": getattr(meta, "total_token_count", None),
+                        }
+                    return text, usage
+
+                except Exception as err:
+                    last_error = err
+                    err_str = str(err).lower()
+
+                    # 404 means model doesn't exist under this API key - jump to next candidate immediately
+                    if "404" in err_str or "not found" in err_str:
+                        logger.debug("Model not found, trying next candidate", extra={"model": model_name})
+                        break
+
+                    # 503 / 429 means temporary high demand or rate limit - sleep and retry
+                    is_transient = "503" in err_str or "unavailable" in err_str or "429" in err_str or "demand" in err_str
+                    if is_transient and attempt < retries - 1:
+                        delay = backoff_delays[attempt]
+                        logger.warning(
+                            f"Gemini API transient spike ({str(err)[:120]}); backing off {delay}s before retry {attempt + 1}/{retries}...",
+                            extra={"model": model_name, "attempt": attempt + 1, "delay": delay},
+                        )
+                        await asyncio.sleep(delay)
                         continue
-        except Exception as list_err:
-            logger.warning("Model discovery listing failed", extra={"error": str(list_err)[:200]})
+
+                    # If other error or out of retries, record and try next candidate
+                    break
 
         if last_error:
             raise last_error
