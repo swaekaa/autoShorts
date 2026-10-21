@@ -61,11 +61,10 @@ class GeminiClient:
         if system_instruction:
             config_kwargs["system_instruction"] = system_instruction
 
-        # Primary model with valid Free Tier fallbacks for Google AI Studio
+        # Primary model for Google AI Studio Free Tier
         candidate_models = [self.text_model]
-        for m in ["gemini-flash-latest", "gemini-1.5-flash"]:
-            if m not in candidate_models and "pro" not in m.lower():
-                candidate_models.append(m)
+        if "gemini-flash-latest" not in candidate_models:
+            candidate_models.append("gemini-flash-latest")
 
         last_error = None
         for model_name in candidate_models:
@@ -75,39 +74,13 @@ class GeminiClient:
 
             for attempt in range(retries):
                 try:
-                    if response_schema is not None:
-                        config_kwargs["response_mime_type"] = "application/json"
-                        try:
-                            config_kwargs["response_schema"] = response_schema
-                            generation_config = genai_types.GenerateContentConfig(**config_kwargs)
-                            response = self._client.models.generate_content(
-                                model=model_name,
-                                contents=prompt,
-                                config=generation_config,
-                            )
-                        except Exception as schema_err:
-                            s_err = str(schema_err).lower()
-                            if "404" in s_err or "not found" in s_err:
-                                raise schema_err
-                            logger.warning(
-                                "generate_content with response_schema failed, trying plain JSON mode",
-                                extra={"error": str(schema_err)[:250]},
-                            )
-                            # Fallback immediately to standard JSON mode without schema
-                            config_kwargs.pop("response_schema", None)
-                            generation_config = genai_types.GenerateContentConfig(**config_kwargs)
-                            response = self._client.models.generate_content(
-                                model=model_name,
-                                contents=prompt,
-                                config=generation_config,
-                            )
-                    else:
-                        generation_config = genai_types.GenerateContentConfig(**config_kwargs)
-                        response = self._client.models.generate_content(
-                            model=model_name,
-                            contents=prompt,
-                            config=generation_config,
-                        )
+                    config_kwargs["response_mime_type"] = "application/json"
+                    generation_config = genai_types.GenerateContentConfig(**config_kwargs)
+                    response = self._client.models.generate_content(
+                        model=model_name,
+                        contents=prompt,
+                        config=generation_config,
+                    )
 
                     if model_name != self.text_model:
                         logger.info("Switched to working Gemini model", extra={"model": model_name})

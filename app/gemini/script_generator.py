@@ -42,13 +42,29 @@ SCRIPT_PROMPT_TEMPLATE = """
 {existing_topics}
 
 **आवश्यकताएं:**
-- हिंदी वर्णन: 18-25 शब्द (तेज़, स्पष्ट, ऊर्जावान)
-- दृश्य: 3-5 दृश्य, कुल 10 सेकंड
-- वीडियो शीर्षक: आकर्षक हिंदी शीर्षक #Shorts के साथ
-- हैशटैग: 10-15 प्रासंगिक हैशटैग
-- तथ्यात्मक सटीकता: स्रोत और सत्यापन नोट्स शामिल करें
+- हिंदी वर्णन (hindi_narration): ठीक 18-25 शब्द (तेज़, स्पष्ट, ऊर्जावान, 10 सेकंड में बोलने योग्य)
+- दृश्य (scenes): 3 दृश्य, प्रत्येक दृश्य का duration_seconds लगभग 3.3
+- visual_description_english: प्रत्येक दृश्य के लिए विस्तृत अंग्रेजी प्रॉम्प्ट (divine devotional 9:16 art)
+- video_title_hindi: आकर्षक हिंदी शीर्षक #Shorts के साथ
+- hashtags: 10 प्रासंगिक हैशटैग
 
-JSON प्रारूप में उत्तर दें जो इस schema से मेल खाता हो।
+केवल निम्न JSON प्रारूप में उत्तर दें:
+{{
+  "video_title_hindi": "...",
+  "hindi_narration": "...",
+  "video_description_hindi": "...",
+  "main_educational_takeaway": "...",
+  "scenes": [
+    {{
+      "scene_number": 1,
+      "visual_description_english": "...",
+      "visual_description_hindi": "...",
+      "onscreen_text_hindi": "...",
+      "duration_seconds": 3.3
+    }}
+  ],
+  "hashtags": ["#Shorts", "#Hinduism", "#SanatanDharma"]
+}}
 """
 
 
@@ -81,12 +97,11 @@ class ScriptGenerator:
             extra={"topic": topic[:80], "category": category.value},
         )
 
-        # Use GeneratedScript as the response schema for structured output
         text, usage = await self._client.generate_text(
             prompt=prompt,
             system_instruction=SYSTEM_PROMPT,
-            response_schema=GeneratedScript,
-            temperature=0.8,
+            response_schema=None,
+            temperature=0.7,
             max_output_tokens=2048,
         )
 
