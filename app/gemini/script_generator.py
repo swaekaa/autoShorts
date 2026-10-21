@@ -134,17 +134,69 @@ class ScriptGenerator:
                 clean = clean[start:end + 1]
 
             data = json.loads(clean)
-            # Ensure required fields have defaults if missing
+
+            # Normalize title
+            title = data.get("video_title_hindi") or data.get("title") or f"{topic} #Shorts"
+            data["video_title_hindi"] = title
+
+            # Normalize narration
+            narration = data.get("hindi_narration") or data.get("narration") or ""
+            data["hindi_narration"] = narration
+
+            # Normalize description & takeaways
+            data.setdefault("video_description_hindi", f"{topic}\n\n#Shorts #HinduMythology #SanatanDharma")
+            data.setdefault("main_educational_takeaway", f"{topic} का आध्यात्मिक एवं सांस्कृतिक महत्व")
+            data.setdefault("claim_type", "traditional_interpretation")
+
+            # Normalize scenes
+            raw_scenes = data.get("scenes") or []
+            if not isinstance(raw_scenes, list) or len(raw_scenes) == 0:
+                raw_scenes = [{"scene_number": 1, "visual_description": topic}]
+
+            clean_scenes = []
+            default_dur = round(10.0 / max(1, len(raw_scenes)), 1)
+            for i, sc in enumerate(raw_scenes, 1):
+                if not isinstance(sc, dict):
+                    sc = {}
+                sc_num = sc.get("scene_number", i)
+                vis_desc = sc.get("visual_description_hindi") or sc.get("visual_description") or sc.get("description") or topic
+                vis_en = sc.get("visual_description_english") or sc.get("visual_description") or topic
+                onscreen = sc.get("onscreen_text_hindi") or sc.get("text") or sc.get("title") or topic
+
+                dur = sc.get("duration_seconds")
+                if dur is None:
+                    ts = str(sc.get("timestamp", ""))
+                    if "-" in ts:
+                        try:
+                            parts = ts.split("-")
+                            dur = abs(float(parts[1].strip().split(":")[-1]) - float(parts[0].strip().split(":")[-1]))
+                        except Exception:
+                            dur = default_dur
+                    else:
+                        dur = default_dur
+
+                clean_scenes.append({
+                    "scene_number": sc_num,
+                    "duration_seconds": float(dur or default_dur),
+                    "visual_description_hindi": str(vis_desc),
+                    "visual_description_english": str(vis_en),
+                    "onscreen_text_hindi": str(onscreen),
+                    "camera_motion": sc.get("camera_motion", "slow zoom in"),
+                    "transition": sc.get("transition", "cut"),
+                })
+            data["scenes"] = clean_scenes
+
+            # Defaults for other fields
             data.setdefault("topic", topic)
             data.setdefault("topic_category", category.value)
             data.setdefault("source_references", [])
             data.setdefault("factual_concerns", [])
-            data.setdefault("narration_word_count", 0)
-            data.setdefault("estimated_narration_seconds", 0.0)
+            data.setdefault("narration_word_count", len(narration.split()))
+            data.setdefault("estimated_narration_seconds", len(narration.split()) / 2.5)
             data.setdefault("content_verification_notes", "")
             data.setdefault("hashtags", ["#Shorts", "#HinduMythology", "#Hinduism"])
 
-            # Ensure #Shorts is always included
+            # Ensure #Shorts is in hashtags
             if "#Shorts" not in data["hashtags"] and "#shorts" not in data["hashtags"]:
                 data["hashtags"].insert(0, "#Shorts")
 

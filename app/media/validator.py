@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from app.logging_config import get_logger
+from app.media.ffmpeg_utils import get_ffmpeg_path, get_ffprobe_path
 from app.schemas import ValidationResult
 
 logger = get_logger(__name__)
@@ -165,8 +166,9 @@ class MediaValidator:
         return result
 
     def _ffprobe(self, path: Path) -> dict:
+        ffprobe_bin = get_ffprobe_path()
         cmd = [
-            "ffprobe",
+            ffprobe_bin,
             "-v", "quiet",
             "-print_format", "json",
             "-show_streams",
@@ -180,8 +182,9 @@ class MediaValidator:
 
     def _check_decodability(self, path: Path) -> bool:
         """Try to decode the first and last second of the video."""
+        ffmpeg_bin = get_ffmpeg_path()
         cmd = [
-            "ffmpeg",
+            ffmpeg_bin,
             "-v", "error",
             "-i", str(path),
             "-t", "1",

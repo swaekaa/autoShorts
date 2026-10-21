@@ -12,10 +12,12 @@ import asyncio
 import logging
 import subprocess
 import tempfile
+import wave
 from pathlib import Path
 from typing import Any
 
 from app.logging_config import get_logger
+from app.media.ffmpeg_utils import get_ffmpeg_path, get_ffprobe_path
 from app.quota_manager import QuotaEventType, QuotaManager, ServiceProvider
 
 logger = get_logger(__name__)
@@ -82,22 +84,28 @@ class NarrationGenerator:
                 mp3_path = output_path.with_suffix(".mp3")
                 await communicate.save(str(mp3_path))
 
-                # Convert to AAC via FFmpeg for standard container mixing
+                # Convert to AAC via FFmpeg if available, otherwise retain MP3
+                final_path = mp3_path
                 aac_path = output_path.with_suffix(".aac")
-                cmd = [
-                    "ffmpeg", "-y",
-                    "-i", str(mp3_path),
-                    "-c:a", "aac",
-                    "-b:a", "192k",
-                    str(aac_path),
-                ]
-                subprocess.run(cmd, capture_output=True, timeout=60)
-                final_path = aac_path if aac_path.exists() else mp3_path
+                ffmpeg_bin = get_ffmpeg_path()
+                try:
+                    cmd = [
+                        ffmpeg_bin, "-y",
+                        "-i", str(mp3_path),
+                        "-c:a", "aac",
+                        "-b:a", "192k",
+                        str(aac_path),
+                    ]
+                    res = subprocess.run(cmd, capture_output=True, timeout=60)
+                    if res.returncode == 0 and aac_path.exists():
+                        final_path = aac_path
+                except Exception as exc:
+                    logger.debug("FFmpeg AAC conversion skipped/failed; using MP3 directly", extra={"error": str(exc)})
 
-                duration = self._get_audio_duration(str(final_path))
+                duration = self._get_audio_duration(str(final_path), default_words_fallback=len(text.split()))
                 logger.info(
                     "Edge TTS narration synthesized (Free Tier)",
-                    extra={"voice": voice, "duration_seconds": duration},
+                    extra={"voice": voice, "duration_seconds": duration, "path": str(final_path)},
                 )
                 return final_path, duration
             except Exception as exc:
@@ -134,38 +142,41 @@ class NarrationGenerator:
 
             try:
                 aac_path = output_path.with_suffix(".aac")
+                ffmpeg_bin = get_ffmpeg_path()
                 cmd = [
-                    "ffmpeg", "-y",
+                    ffmpeg_bin, "-y",
                     "-i", tmp_path,
                     "-c:a", "aac",
                     "-b:a", "192k",
                     str(aac_path),
                 ]
-                subprocess.run(cmd, capture_output=True, timeout=60)
-                final_path = aac_path if aac_path.exists() else Path(tmp_path)
-                duration = self._get_audio_duration(str(final_path))
+                res = subprocess.run(cmd, capture_output=True, timeout=60)
+                final_path = aac_path if (res.returncode == 0 and aac_path.exists()) else Path(tmp_path)
+                duration = self._get_audio_duration(str(final_path), default_words_fallback=len(text.split()))
                 return final_path, duration
             finally:
                 Path(tmp_path).unlink(missing_ok=True)
 
         # ── 3. Pure local fallback (silence/ambient audio) ────────────
-        logger.warning("No TTS engine available; generating placeholder audio with FFmpeg")
-        fallback_path = output_path.with_suffix(".aac")
-        cmd = [
-            "ffmpeg", "-y",
-            "-f", "lavfi",
-            "-i", "anullsrc=r=44100:cl=stereo",
-            "-t", "8.0",
-            "-c:a", "aac",
-            str(fallback_path),
-        ]
-        subprocess.run(cmd, capture_output=True, timeout=30)
-        return fallback_path, 8.0
+        logger.warning("No TTS engine available; generating placeholder audio")
+        fallback_path = output_path.with_suffix(".wav")
+        try:
+            # Generate 8 seconds of silent 16-bit 44.1kHz mono PCM via built-in wave module
+            with wave.open(str(fallback_path), "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(44100)
+                wf.writeframes(b"\x00" * (44100 * 2 * 8))
+            return fallback_path, 8.0
+        except Exception as exc:
+            logger.error("Failed to generate fallback wave audio", extra={"error": str(exc)})
+            return fallback_path, 8.0
 
-    def _get_audio_duration(self, path: str) -> float:
-        """Use ffprobe to get audio duration in seconds."""
+    def _get_audio_duration(self, path: str, default_words_fallback: int = 25) -> float:
+        """Use ffprobe or fallback estimation to get audio duration in seconds."""
+        ffprobe_bin = get_ffprobe_path()
         cmd = [
-            "ffprobe", "-v", "quiet",
+            ffprobe_bin, "-v", "quiet",
             "-print_format", "json",
             "-show_format",
             path,
@@ -173,8 +184,15 @@ class NarrationGenerator:
         try:
             import json
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
-            data = json.loads(result.stdout)
-            return float(data.get("format", {}).get("duration", 0.0))
-        except Exception as exc:
-            logger.warning("Could not probe audio duration", extra={"error": str(exc)})
-            return 8.0
+            if result.returncode == 0 and result.stdout:
+                data = json.loads(result.stdout)
+                dur = float(data.get("format", {}).get("duration", 0.0))
+                if dur > 0:
+                    return dur
+        except Exception:
+            pass
+
+        # Estimate duration based on word count (~2.5 words per sec for Hindi)
+        est = round(max(4.0, min(15.0, default_words_fallback / 2.5)), 2)
+        logger.info("Using estimated audio duration based on word count", extra={"duration_seconds": est})
+        return est

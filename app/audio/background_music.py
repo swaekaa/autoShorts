@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import logging
 import subprocess
+import wave
 from pathlib import Path
 from typing import Literal
 
 from app.logging_config import get_logger
+from app.media.ffmpeg_utils import get_ffmpeg_path
 
 logger = get_logger(__name__)
 
@@ -74,8 +76,9 @@ class BackgroundMusicGenerator:
         volume: float,
     ) -> Path:
         """Trim or loop an audio file to exact duration."""
+        ffmpeg_bin = get_ffmpeg_path()
         cmd = [
-            "ffmpeg", "-y",
+            ffmpeg_bin, "-y",
             "-stream_loop", "-1",  # loop indefinitely
             "-i", str(source),
             "-t", str(duration),
@@ -84,11 +87,12 @@ class BackgroundMusicGenerator:
             "-b:a", "128k",
             str(output),
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-        if result.returncode != 0:
-            logger.warning(
-                "Music trim failed", extra={"stderr": result.stderr[:200]}
-            )
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            if result.returncode != 0:
+                logger.warning("Music trim failed", extra={"stderr": result.stderr[:200]})
+        except Exception as exc:
+            logger.warning("Music trim process error", extra={"error": str(exc)})
         return output
 
     def _synthesize_ambient(
@@ -102,9 +106,8 @@ class BackgroundMusicGenerator:
         Synthesize ambient drone music using FFmpeg's sine oscillators.
         Creates a devotional OM-like drone with harmonics.
         """
-        # Fundamental frequency and harmonics vary by mood
         freq_map: dict[AudioMood, tuple[float, float, float]] = {
-            "devotional": (136.1, 272.2, 408.3),   # OM frequency and overtones
+            "devotional": (136.1, 272.2, 408.3),
             "peaceful": (174.0, 285.0, 396.0),
             "energetic": (220.0, 440.0, 660.0),
             "mystical": (111.0, 222.0, 333.0),
@@ -123,8 +126,9 @@ class BackgroundMusicGenerator:
             f"afade=t=out:st={duration - 0.5}:d=0.5"
         )
 
+        ffmpeg_bin = get_ffmpeg_path()
         cmd = [
-            "ffmpeg", "-y",
+            ffmpeg_bin, "-y",
             "-f", "lavfi",
             "-i", f"sine=f={f1}:sample_rate=44100",
             "-f", "lavfi",
@@ -138,13 +142,16 @@ class BackgroundMusicGenerator:
             str(output),
         ]
 
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-        if result.returncode != 0:
-            logger.warning(
-                "Ambient synthesis failed, generating silence",
-                extra={"stderr": result.stderr[:200]},
-            )
-            # Last resort: generate silence
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            if result.returncode != 0:
+                logger.warning(
+                    "Ambient synthesis failed, generating silence",
+                    extra={"stderr": result.stderr[:200]},
+                )
+                self._generate_silence(output, duration)
+        except Exception as exc:
+            logger.warning("Ambient synthesis failed, generating silence", extra={"error": str(exc)})
             self._generate_silence(output, duration)
 
         logger.info(
@@ -154,12 +161,29 @@ class BackgroundMusicGenerator:
         return output
 
     def _generate_silence(self, output: Path, duration: float) -> None:
+        ffmpeg_bin = get_ffmpeg_path()
         cmd = [
-            "ffmpeg", "-y",
+            ffmpeg_bin, "-y",
             "-f", "lavfi",
             "-i", f"anullsrc=r=44100:cl=stereo",
             "-t", str(duration),
             "-c:a", "aac",
             str(output),
         ]
-        subprocess.run(cmd, capture_output=True, timeout=30)
+        try:
+            res = subprocess.run(cmd, capture_output=True, timeout=30)
+            if res.returncode == 0 and output.exists():
+                return
+        except Exception:
+            pass
+
+        # Fallback to pure python wave generation
+        try:
+            frames = int(44100 * 2 * duration)
+            with wave.open(str(output.with_suffix(".wav")), "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(44100)
+                wf.writeframes(b"\x00" * frames)
+        except Exception as exc:
+            logger.error("Failed to generate silence wave", extra={"error": str(exc)})

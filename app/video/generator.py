@@ -26,6 +26,7 @@ import httpx
 
 from app.gemini.client import GeminiClient
 from app.logging_config import get_logger
+from app.media.ffmpeg_utils import get_ffmpeg_path
 from app.quota_manager import (
     QuotaEventType,
     QuotaManager,
@@ -110,8 +111,9 @@ class VideoGenerator:
                 "zoompan=z='min(zoom+0.0010,1.18)':d=300:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=30,"
                 "format=yuv420p"
             )
+            ffmpeg_bin = get_ffmpeg_path()
             cmd = [
-                "ffmpeg", "-y",
+                ffmpeg_bin, "-y",
                 "-loop", "1",
                 "-i", str(image_path),
                 "-vf", filter_graph,
@@ -129,8 +131,9 @@ class VideoGenerator:
                 "drawbox=x=180:y=360:w=720:h=1200:color=#FFD700@0.2:t=fill,"
                 "format=yuv420p"
             )
+            ffmpeg_bin = get_ffmpeg_path()
             cmd = [
-                "ffmpeg", "-y",
+                ffmpeg_bin, "-y",
                 "-f", "lavfi",
                 "-i", filter_graph,
                 "-t", "10.0",

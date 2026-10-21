@@ -13,6 +13,7 @@ alembic>=1.13.1,<2.0.0
 
 # AI & Speech Synthesis (Free Tier Default: Edge Neural TTS + Gemini Free Tier)
 edge-tts>=6.1.12
+imageio-ffmpeg>=0.5.1
 google-genai>=0.1.1
 google-cloud-texttospeech>=2.16.3
 google-cloud-storage>=2.16.0

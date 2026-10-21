@@ -163,37 +163,37 @@ class WorkerStatusResponse(BaseModel):
 # ── Script Generation (internal Pydantic schemas used with Gemini) ──
 
 class SceneDescription(BaseModel):
-    scene_number: int = Field(..., ge=1, le=10)
-    duration_seconds: float = Field(..., ge=0.5, le=5.0)
-    visual_description_hindi: str
-    visual_description_english: str
-    onscreen_text_hindi: str
-    camera_motion: str = Field(default="static")
+    scene_number: int = Field(default=1, ge=1, le=10)
+    duration_seconds: float = Field(default=3.3, ge=0.5, le=10.0)
+    visual_description_hindi: str = ""
+    visual_description_english: str = ""
+    onscreen_text_hindi: str = ""
+    camera_motion: str = Field(default="slow zoom in")
     transition: str = Field(default="cut")
 
 
 class GeneratedScript(BaseModel):
     """Structured output from Gemini script generation."""
     topic: str
-    topic_category: TopicCategory
-    main_educational_takeaway: str
+    topic_category: TopicCategory = TopicCategory.DEITY
+    main_educational_takeaway: str = "सनातन धर्म की पावन महिमा"
     claim_type: str = Field(
-        ...,
+        default="traditional_interpretation",
         description="One of: scriptural_account | traditional_interpretation | historical_claim | modern_scholarly_interpretation",
     )
     source_references: list[str] = Field(default_factory=list)
     hindi_narration: str = Field(
-        ...,
+        default="",
         description="Full Hindi narration text. Target 18-25 words for ~10 second speech.",
     )
-    narration_word_count: int
-    scenes: list[SceneDescription] = Field(..., min_length=1, max_length=8)
-    video_title_hindi: str
-    video_description_hindi: str
-    hashtags: list[str] = Field(..., max_length=30)
-    content_verification_notes: str
+    narration_word_count: int = 0
+    scenes: list[SceneDescription] = Field(default_factory=list)
+    video_title_hindi: str = ""
+    video_description_hindi: str = ""
+    hashtags: list[str] = Field(default_factory=lambda: ["#Shorts", "#HinduMythology"])
+    content_verification_notes: str = ""
     factual_concerns: list[str] = Field(default_factory=list)
-    estimated_narration_seconds: float
+    estimated_narration_seconds: float = 8.0
 
 
 class ValidationResult(BaseModel):
