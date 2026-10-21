@@ -75,11 +75,11 @@ class VideoRenderer:
         # Build FFmpeg filter graph
         target_duration = float(self._duration)
 
-        # Subtitle filter with Devanagari font
+        # Subtitle filter with clean path escaping
+        sub_escaped = str(subtitle_path.resolve()).replace("\\", "/").replace(":", "\\:")
         subtitle_filter = (
-            f"subtitles='{self._escape_path(str(subtitle_path))}':"
-            f"force_style='FontFile={self._escape_path(font_path)},"
-            f"FontName=NotoSansDevanagari,"
+            f"subtitles='{sub_escaped}':"
+            f"force_style='FontName=Nirmala UI,"
             f"FontSize=20,"
             f"PrimaryColour=&H00FFFFFF,"
             f"OutlineColour=&H00000000,"
@@ -105,7 +105,7 @@ class VideoRenderer:
         # Audio mix: narration at 1.0, background at 0.15
         filter_audio = (
             f"[1:a]volume=1.0,atrim=duration={target_duration},asetpts=PTS-STARTPTS[narr];"
-            f"[2:a]volume=0.15,stream_loop=-1,atrim=duration={target_duration},asetpts=PTS-STARTPTS[bg];"
+            f"[2:a]volume=0.15,atrim=duration={target_duration},asetpts=PTS-STARTPTS[bg];"
             f"[narr][bg]amix=inputs=2:duration=first[aout]"
         )
 
@@ -116,11 +116,12 @@ class VideoRenderer:
             ffmpeg_bin, "-y",
             # Input 0: raw video (may be shorter than 10s – will be padded)
             "-stream_loop", "-1",  # loop the raw video if needed
-            "-i", str(raw_video_path),
+            "-i", str(raw_video_path.resolve()),
             # Input 1: narration audio
-            "-i", str(narration_audio_path),
-            # Input 2: background music
-            "-i", str(background_music_path),
+            "-i", str(narration_audio_path.resolve()),
+            # Input 2: background music (loop indefinitely to match duration)
+            "-stream_loop", "-1",
+            "-i", str(background_music_path.resolve()),
             "-filter_complex", filter_complex,
             "-map", "[vout]",
             "-map", "[aout]",

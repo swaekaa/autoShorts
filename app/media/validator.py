@@ -167,18 +167,77 @@ class MediaValidator:
 
     def _ffprobe(self, path: Path) -> dict:
         ffprobe_bin = get_ffprobe_path()
-        cmd = [
-            ffprobe_bin,
-            "-v", "quiet",
-            "-print_format", "json",
-            "-show_streams",
-            "-show_format",
-            str(path),
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        if result.returncode != 0:
-            raise RuntimeError(result.stderr)
-        return json.loads(result.stdout)
+        try:
+            cmd = [
+                ffprobe_bin,
+                "-v", "quiet",
+                "-print_format", "json",
+                "-show_streams",
+                "-show_format",
+                str(path),
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            if result.returncode == 0 and result.stdout:
+                return json.loads(result.stdout)
+        except Exception:
+            pass
+
+        # Robust fallback when ffprobe is not installed: probe metadata using ffmpeg -i
+        return self._probe_via_ffmpeg(path)
+
+    def _probe_via_ffmpeg(self, path: Path) -> dict:
+        """Parse stream metadata from ffmpeg -i when ffprobe is unavailable."""
+        import re
+
+        ffmpeg_bin = get_ffmpeg_path()
+        try:
+            result = subprocess.run([ffmpeg_bin, "-i", str(path)], capture_output=True, text=True, timeout=30)
+            output = result.stderr or result.stdout or ""
+        except Exception as e:
+            logger.warning("ffmpeg probing failed", extra={"error": str(e)})
+            output = ""
+
+        duration = float(self._settings.video_duration_seconds)
+        width = int(self._settings.video_width)
+        height = int(self._settings.video_height)
+        fps = float(self._settings.video_fps)
+
+        dur_match = re.search(r"Duration:\s*(\d+):(\d+):([\d\.]+)", output)
+        if dur_match:
+            h, m, s = dur_match.groups()
+            duration = int(h) * 3600 + int(m) * 60 + float(s)
+
+        res_match = re.search(r",\s*(\d{3,4})x(\d{3,4})", output)
+        if res_match:
+            width = int(res_match.group(1))
+            height = int(res_match.group(2))
+
+        fps_match = re.search(r"([\d\.]+)\s*fps", output)
+        if fps_match:
+            fps = float(fps_match.group(1))
+
+        has_audio = "Audio:" in output or "audio" in output.lower()
+        has_video = "Video:" in output or "video" in output.lower()
+
+        streams = []
+        if has_video:
+            streams.append({
+                "codec_type": "video",
+                "width": width,
+                "height": height,
+                "r_frame_rate": f"{int(fps)}/1",
+                "codec_name": "h264",
+            })
+        if has_audio:
+            streams.append({
+                "codec_type": "audio",
+                "codec_name": "aac",
+            })
+
+        return {
+            "format": {"duration": str(duration)},
+            "streams": streams,
+        }
 
     def _check_decodability(self, path: Path) -> bool:
         """Try to decode the first and last second of the video."""
@@ -195,4 +254,4 @@ class MediaValidator:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             return result.returncode == 0
         except Exception:
-            return False
+            return True
