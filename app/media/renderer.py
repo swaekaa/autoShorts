@@ -152,6 +152,27 @@ class VideoRenderer:
         )
 
         if result.returncode != 0:
+            logger.warning("Render failed with subtitles filter, retrying without burned-in subtitles...", extra={"stderr": result.stderr[-300:]})
+            filter_video_no_sub = (
+                f"[0:v]"
+                f"scale={self._width}:{self._height}:force_original_aspect_ratio=decrease,"
+                f"pad={self._width}:{self._height}:(ow-iw)/2:(oh-ih)/2:color=black,"
+                f"setsar=1,"
+                f"fps={self._fps},"
+                f"trim=duration={target_duration},"
+                f"setpts=PTS-STARTPTS"
+                f"[vout]"
+            )
+            filter_complex_no_sub = f"{filter_video_no_sub};{filter_audio}"
+            cmd_no_sub = list(cmd)
+            try:
+                fc_idx = cmd_no_sub.index("-filter_complex")
+                cmd_no_sub[fc_idx + 1] = filter_complex_no_sub
+                result = subprocess.run(cmd_no_sub, capture_output=True, text=True, timeout=300)
+            except Exception as e:
+                logger.error("Retry without subtitles failed to execute", extra={"error": str(e)})
+
+        if result.returncode != 0:
             logger.error(
                 "FFmpeg render failed",
                 extra={
@@ -177,18 +198,16 @@ class VideoRenderer:
 
     def _get_font_path(self) -> str:
         """Return available Devanagari font path."""
-        if Path(DEVANAGARI_FONT).exists():
-            return DEVANAGARI_FONT
-        if Path(DEVANAGARI_FONT_FALLBACK).exists():
-            return str(Path(DEVANAGARI_FONT_FALLBACK).resolve())
-        # Search common locations
-        for path in Path("/").rglob("NotoSansDevanagari*.ttf"):
-            return str(path)
-        logger.warning(
-            "Devanagari font not found – subtitles may not render correctly. "
-            "Install with: apt-get install fonts-noto-core"
-        )
-        return "DejaVu Sans"  # fallback
+        candidates = [
+            Path(DEVANAGARI_FONT),
+            Path(r"C:\Windows\Fonts\Nirmala.ttf"),
+            Path(r"C:\Windows\Fonts\mangal.ttf"),
+            Path(r"C:\Windows\Fonts\arial.ttf"),
+        ]
+        for c in candidates:
+            if c.exists():
+                return str(c)
+        return "Arial"
 
     @staticmethod
     def _escape_path(path: str) -> str:

@@ -163,7 +163,7 @@ class VideoGenerator:
 
         if mode == "free_motion":
             video_path = await self._generate_free_motion_video(script, job_id)
-            return f"free_motion_{job_id}_{video_path.name}"
+            return f"free_motion:{video_path.name}"
 
         # Veo mode
         if not await self._quota.can_generate(ServiceProvider.GEMINI_VIDEO):
@@ -213,9 +213,19 @@ class VideoGenerator:
         """
         Poll the operation until done. For free_motion, resolves immediately.
         """
-        if operation_name.startswith("free_motion_"):
-            filename = operation_name.split("_", 2)[-1]
-            return {"type": "free_motion", "path": str(self._storage_dir / filename)}
+        if str(operation_name).startswith("free_motion"):
+            if ":" in operation_name:
+                filename = operation_name.split(":", 1)[1]
+            else:
+                filename = operation_name.replace("free_motion_", "")
+                if not (self._storage_dir / filename).exists():
+                    # Handle possible job_id prefix e.g. 4_job_4_raw_video.mp4
+                    parts = filename.split("_", 1)
+                    if len(parts) > 1 and (self._storage_dir / parts[1]).exists():
+                        filename = parts[1]
+
+            path = self._storage_dir / filename
+            return {"type": "free_motion", "path": str(path)}
 
         poll_interval = self._settings.video_gen_poll_interval_seconds
         start_time = time.monotonic()
@@ -260,9 +270,13 @@ class VideoGenerator:
         Returns local file path of generated clip.
         """
         if isinstance(operation, dict) and operation.get("type") == "free_motion":
-            path = Path(operation["path"])
+            path = Path(operation.get("path", ""))
             if path.exists():
                 return path
+            fallback = self._storage_dir / f"job_{job_id}_raw_video.mp4"
+            if fallback.exists():
+                return fallback
+            raise VideoGenerationError(f"Free motion video file not found at {path}")
 
         videos = self._client.get_generated_video(operation)
         if not videos:
