@@ -61,17 +61,17 @@ class GeminiClient:
         if system_instruction:
             config_kwargs["system_instruction"] = system_instruction
 
-        # Primary model with valid fallbacks for Google AI Studio
+        # Primary model with valid Free Tier fallbacks for Google AI Studio
         candidate_models = [self.text_model]
-        for m in ["gemini-flash-latest", "gemini-1.5-flash", "gemini-pro-latest"]:
-            if m not in candidate_models:
+        for m in ["gemini-flash-latest", "gemini-1.5-flash"]:
+            if m not in candidate_models and "pro" not in m.lower():
                 candidate_models.append(m)
 
         last_error = None
         for model_name in candidate_models:
             # Retry transient 503 (demand spike) or 429 (rate limit) with backoff
-            retries = 3
-            backoff_delays = [2.5, 5.0, 10.0]
+            retries = 4
+            backoff_delays = [3.0, 6.0, 12.0, 20.0]
 
             for attempt in range(retries):
                 try:
@@ -89,12 +89,11 @@ class GeminiClient:
                             s_err = str(schema_err).lower()
                             if "404" in s_err or "not found" in s_err:
                                 raise schema_err
-                            if "503" in s_err or "unavailable" in s_err or "429" in s_err:
-                                raise schema_err  # let outer transient retry handle with sleep
                             logger.warning(
-                                "generate_content with response_schema failed, falling back to JSON mode",
-                                extra={"error": str(schema_err)[:300]},
+                                "generate_content with response_schema failed, trying plain JSON mode",
+                                extra={"error": str(schema_err)[:250]},
                             )
+                            # Fallback immediately to standard JSON mode without schema
                             config_kwargs.pop("response_schema", None)
                             generation_config = genai_types.GenerateContentConfig(**config_kwargs)
                             response = self._client.models.generate_content(
