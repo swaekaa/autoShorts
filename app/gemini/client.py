@@ -61,20 +61,11 @@ class GeminiClient:
         if system_instruction:
             config_kwargs["system_instruction"] = system_instruction
 
-        # Build candidate models dynamically from API key capabilities
+        # Candidate models with default prioritized list
         candidate_models = [self.text_model]
-        try:
-            for m in self._client.models.list():
-                name = getattr(m, "name", "")
-                if name.startswith("models/"):
-                    name = name[7:]
-                if any(x in name.lower() for x in ("flash", "pro", "gemini-2")):
-                    if name not in candidate_models:
-                        candidate_models.append(name)
-        except Exception:
-            for fallback in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest"]:
-                if fallback not in candidate_models:
-                    candidate_models.append(fallback)
+        for fallback in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest"]:
+            if fallback not in candidate_models:
+                candidate_models.append(fallback)
 
         last_error = None
         for model_name in candidate_models:
@@ -86,10 +77,17 @@ class GeminiClient:
                 try:
                     config_kwargs["response_mime_type"] = "application/json"
                     generation_config = genai_types.GenerateContentConfig(**config_kwargs)
-                    response = self._client.models.generate_content(
-                        model=model_name,
-                        contents=prompt,
-                        config=generation_config,
+
+                    def _call_generate():
+                        return self._client.models.generate_content(
+                            model=model_name,
+                            contents=prompt,
+                            config=generation_config,
+                        )
+
+                    response = await asyncio.wait_for(
+                        asyncio.to_thread(_call_generate),
+                        timeout=30.0,
                     )
 
                     if model_name != self.text_model:

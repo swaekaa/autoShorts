@@ -75,20 +75,11 @@ class VideoRenderer:
         # Build FFmpeg filter graph
         target_duration = float(self._duration)
 
-        # Subtitle filter with clean path escaping
-        sub_escaped = str(subtitle_path.resolve()).replace("\\", "/").replace(":", "\\:")
-        subtitle_filter = (
-            f"subtitles='{sub_escaped}':"
-            f"force_style='FontName=Nirmala UI,"
-            f"FontSize=20,"
-            f"PrimaryColour=&H00FFFFFF,"
-            f"OutlineColour=&H00000000,"
-            f"BackColour=&H80000000,"
-            f"Outline=2,"
-            f"Shadow=1,"
-            f"Alignment=2,"
-            f"MarginV=60'"
-        )
+        # Subtitle filter: run with cwd set to subtitle file's directory so libass
+        # never fails on Windows drive letters, colons, or quote escaping.
+        sub_parent = subtitle_path.parent.resolve()
+        sub_name = subtitle_path.name
+        subtitle_filter = f"subtitles={sub_name}"
 
         filter_video = (
             f"[0:v]"
@@ -137,7 +128,7 @@ class VideoRenderer:
             "-t", str(target_duration),
             # YouTube Shorts metadata
             "-movflags", "+faststart",
-            str(output_path),
+            str(output_path.resolve()),
         ]
 
         logger.info(
@@ -147,10 +138,41 @@ class VideoRenderer:
 
         result = subprocess.run(
             cmd,
+            cwd=str(sub_parent),
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=300,
         )
+
+        if result.returncode != 0:
+            logger.warning("Render failed with relative subtitles filter, retrying with escaped path...", extra={"stderr": result.stderr[-300:]})
+            sub_escaped = str(subtitle_path.resolve()).replace("\\", "/").replace(":", "\\:")
+            filter_video_esc = (
+                f"[0:v]"
+                f"scale={self._width}:{self._height}:force_original_aspect_ratio=decrease,"
+                f"pad={self._width}:{self._height}:(ow-iw)/2:(oh-ih)/2:color=black,"
+                f"setsar=1,"
+                f"fps={self._fps},"
+                f"trim=duration={target_duration},"
+                f"setpts=PTS-STARTPTS,"
+                f"subtitles='{sub_escaped}'"
+                f"[vout]"
+            )
+            filter_complex_esc = f"{filter_video_esc};{filter_audio}"
+            cmd_esc = list(cmd)
+            fc_idx = cmd_esc.index("-filter_complex")
+            cmd_esc[fc_idx + 1] = filter_complex_esc
+            result = subprocess.run(
+                cmd_esc,
+                cwd=str(sub_parent),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=300,
+            )
 
         if result.returncode != 0:
             logger.warning("Render failed with subtitles filter, retrying without burned-in subtitles...", extra={"stderr": result.stderr[-300:]})
@@ -169,7 +191,15 @@ class VideoRenderer:
             try:
                 fc_idx = cmd_no_sub.index("-filter_complex")
                 cmd_no_sub[fc_idx + 1] = filter_complex_no_sub
-                result = subprocess.run(cmd_no_sub, capture_output=True, text=True, timeout=300)
+                result = subprocess.run(
+                    cmd_no_sub,
+                    cwd=str(sub_parent),
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=300,
+                )
             except Exception as e:
                 logger.error("Retry without subtitles failed to execute", extra={"error": str(e)})
 
@@ -227,7 +257,14 @@ class VideoRenderer:
             str(path),
         ]
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=30,
+            )
             if result.returncode == 0 and result.stdout:
                 return json.loads(result.stdout)
         except Exception as exc:

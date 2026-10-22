@@ -26,6 +26,7 @@ SEED_TOPICS: list[dict[str, Any]] = [
     # Deities
     {"text": "भगवान गणेश का विघ्नहर्ता स्वरूप", "category": TopicCategory.DEITY},
     {"text": "भगवान शिव का नटराज रूप और ब्रह्मांडीय नृत्य", "category": TopicCategory.DEITY},
+    {"text": "माँ दुर्गा ने नौ रूप क्यों धारण किए?", "category": TopicCategory.MYTHOLOGY},
     {"text": "माँ दुर्गा और महिषासुर का युद्ध", "category": TopicCategory.MYTHOLOGY},
     {"text": "भगवान विष्णु के दशावतार", "category": TopicCategory.DEITY},
     {"text": "भगवान कृष्ण और सुदामा की मित्रता", "category": TopicCategory.MYTHOLOGY},

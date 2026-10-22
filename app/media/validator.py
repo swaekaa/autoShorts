@@ -176,7 +176,14 @@ class MediaValidator:
                 "-show_format",
                 str(path),
             ]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=30,
+            )
             if result.returncode == 0 and result.stdout:
                 return json.loads(result.stdout)
         except Exception:
@@ -191,7 +198,14 @@ class MediaValidator:
 
         ffmpeg_bin = get_ffmpeg_path()
         try:
-            result = subprocess.run([ffmpeg_bin, "-i", str(path)], capture_output=True, text=True, timeout=30)
+            result = subprocess.run(
+                [ffmpeg_bin, "-i", str(path)],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=30,
+            )
             output = result.stderr or result.stdout or ""
         except Exception as e:
             logger.warning("ffmpeg probing failed", extra={"error": str(e)})

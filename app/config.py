@@ -34,6 +34,14 @@ class Settings(BaseSettings):
         default="veo-3.1-fast-generate-preview",
         description="Model identifier for video generation (used when visual_generator='veo').",
     )
+    imagen_model: str = Field(
+        default="imagen-3.0-generate-002",
+        description="Official Google Imagen 3 model for high-resolution scene imagery.",
+    )
+    enable_pollinations_fallback: bool = Field(
+        default=False,
+        description="Whether to allow optional external pollinations fallback if Imagen 3 is unavailable. Disabled by default.",
+    )
     visual_generator: Literal["free_motion", "veo"] = Field(
         default="free_motion",
         description="Visual engine: 'free_motion' (100% free dynamic vertical visuals with Ken Burns motion) or 'veo'.",

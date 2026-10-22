@@ -164,10 +164,14 @@ class WorkerStatusResponse(BaseModel):
 
 class SceneDescription(BaseModel):
     scene_number: int = Field(default=1, ge=1, le=10)
-    duration_seconds: float = Field(default=3.3, ge=0.5, le=10.0)
+    start_time: float = Field(default=0.0, ge=0.0)
+    end_time: float = Field(default=2.0, ge=0.5)
+    duration_seconds: float = Field(default=2.0, ge=0.5, le=10.0)
     visual_description_hindi: str = ""
     visual_description_english: str = ""
+    motion_prompt: str = ""
     onscreen_text_hindi: str = ""
+    voiceover_hindi: str = ""
     camera_motion: str = Field(default="slow zoom in")
     transition: str = Field(default="cut")
 

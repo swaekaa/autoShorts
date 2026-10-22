@@ -487,17 +487,22 @@ class VideoPipeline:
             return None
 
     async def _validate_video(self, job, final_path: Path) -> bool:
-        logger.info("Stage: validation", extra={"job_id": job.id})
-        result = self._validator.validate(final_path)
-        if result.passed:
+        logger.info("Stage: validation & quality gate", extra={"job_id": job.id})
+        from app.media.quality_gate import QualityGate
+
+        subtitle_path = final_path.parent / "subtitles.ass"
+        gate = QualityGate(self._settings)
+        quality_result = gate.inspect_video(final_path, subtitle_path=subtitle_path if subtitle_path.exists() else None)
+
+        if quality_result.passed:
             await self._job_svc.update_job(job, stage=JobStage.VALIDATED)
             await self._db.commit()
             return True
         else:
-            error_msg = "; ".join(result.errors)
+            error_msg = "; ".join(quality_result.errors)
             logger.error(
-                "Validation failed",
-                extra={"job_id": job.id, "errors": result.errors},
+                "Quality gate validation failed",
+                extra={"job_id": job.id, "errors": quality_result.errors, "warnings": quality_result.warnings},
             )
             await self._job_svc.update_job(
                 job,
